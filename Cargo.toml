@@ -1,0 +1,12 @@
+[package]
+name = "cpu-enough"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Free-tier CPU LLM-inference benchmark harness (paper: When is a CPU enough?)"
+repository = "https://github.com/nitishagar/cpu-enough"
+
+[workspace]
+
+[dependencies]
+# 1.1 scaffold is dependency-free by design; serde + clap land with the 1.2 modules.

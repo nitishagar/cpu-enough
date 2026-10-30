@@ -1,0 +1,29 @@
+name: ci
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # actions/checkout @ main 2026-10-29 (SHA resolved live via gh api)
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      # dtolnay/rust-toolchain @ master 2026-10-29 (reads rust-toolchain.toml)
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          components: clippy, rustfmt
+      - run: cargo test --locked
+      - run: cargo clippy --all-targets -- -D warnings
+      - name: fixture cap (100 MB)
+        run: |
+          violations=$(find fixtures models -type f -size +100M 2>/dev/null | head)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+          echo "fixture cap OK"
+      - name: action-SHA lint (no floating tags)
+        run: |
+          bad=$(grep -rhn "uses:[[:space:]]*[^ ]*@[^ ]*" .github/workflows/ | grep -vE "@[0-9a-f]{40}([[:space:]]|$)") || true
+          if [ -n "$bad" ]; then echo "$bad"; exit 1; fi
+          echo "action SHAs pinned"
