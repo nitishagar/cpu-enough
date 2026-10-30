@@ -1,0 +1,95 @@
+name: probe
+
+# Wrapper-dispatched ONLY (scripts/probe-dispatch.sh). UI/API dispatches are
+# forbidden by the runbook; untagged runs (empty run_tag) still execute but
+# are flagged in daily reconciliation — evidence is preserved, never dropped.
+on:
+  workflow_dispatch:
+    inputs:
+      matrix:
+        description: 'probe set'
+        required: true
+        type: choice
+        options: [survey, arm-identity, sudo, perf, powercap]
+      cell:
+        description: 'cell id within the matrix'
+        required: true
+        type: string
+      run_tag:
+        description: 'wrapper-issued <daykey>-<count>; empty = UNTAGGED'
+        required: false
+        default: ''
+        type: string
+
+run-name: "probe ${{ inputs.matrix }}/${{ inputs.cell }} [${{ inputs.run_tag || 'UNTAGGED' }}]"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ${{ inputs.matrix == 'arm-identity' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    steps:
+      # actions/checkout @ main 2026-10-29 (SHA resolved live via gh api)
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+      # dtolnay/rust-toolchain @ master 2026-10-29 (keep in sync with ci.yml)
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.97.1
+      # UNION fingerprint: FAILS LOUD (unattributable results are worthless).
+      - name: fingerprint
+        run: |
+          mkdir -p out
+          cargo run --locked --quiet -- fingerprint | tee out/fingerprint.json
+          test -s out/fingerprint.json
+      # Survey SKU-attribution set (named commands; negatives recorded, not failed).
+      - name: survey probes
+        if: inputs.matrix == 'survey'
+        run: |
+          lscpu --json > out/lscpu.json 2>&1; echo $? > out/lscpu.exit
+          grep -m1 'model name' /proc/cpuinfo > out/cpuinfo-model.txt 2>&1; echo $? > out/cpuinfo-model.exit
+          curl -s -m 5 -H 'Metadata:true' 'http://169.254.169.254/metadata/instance/compute/vmSize?api-version=2021-02-01&format=text' > out/vmsize.txt 2>&1; echo $? > out/vmsize.exit
+          echo "ImageVersion=${ImageVersion:-ABSENT} ImageOS=${ImageOS:-ABSENT}" > out/image-env.txt
+          nproc > out/nproc.txt 2>&1; echo $? > out/nproc.exit
+          uname -r > out/kernel.txt 2>&1; echo $? > out/kernel.exit
+          echo OK
+      - name: arm-identity probes
+        if: inputs.matrix == 'arm-identity'
+        run: |
+          lscpu > out/lscpu.txt 2>&1; echo $? > out/lscpu.exit
+          lscpu --json > out/lscpu.json 2>&1; echo $? > out/lscpu-json.exit
+          cat /proc/cpuinfo > out/cpuinfo.txt 2>&1; echo $? > out/cpuinfo.exit
+          uname -m > out/arch.txt 2>&1; echo $? > out/arch.exit
+          echo OK
+      - name: sudo probes
+        if: inputs.matrix == 'sudo'
+        run: |
+          sudo -n true > out/sudo-n-true.txt 2>&1; echo $? > out/sudo-n-true.exit
+          sudo -n id > out/sudo-n-id.txt 2>&1; echo $? > out/sudo-n-id.exit
+          echo OK
+      - name: perf probes
+        if: inputs.matrix == 'perf'
+        run: |
+          (which perf || command -v perf) > out/which-perf.txt 2>&1; echo $? > out/which-perf.exit
+          sysctl -n kernel.perf_event_paranoid > out/paranoid.txt 2>&1; echo $? > out/paranoid.exit
+          perf stat -e cycles sleep 0.1 > out/perf-stat.txt 2>&1; echo $? > out/perf-stat.exit
+          echo OK
+      - name: powercap probes
+        if: inputs.matrix == 'powercap'
+        run: |
+          ls /sys/class/powercap > out/powercap.txt 2>&1; echo $? > out/powercap.exit
+          ls /dev/cpu > out/dev-cpu.txt 2>&1; echo $? > out/dev-cpu.exit
+          ls /sys/class/powercap/*/energy_uj > out/energy-uj.txt 2>&1; echo $? > out/energy-uj.exit
+          cat /sys/class/powercap/intel-rapl:0/energy_uj > out/rapl-read.txt 2>&1; echo $? > out/rapl-read.exit
+          echo OK
+      - name: run tag
+        run: |
+          if [ -z "${{ inputs.run_tag }}" ]; then echo UNTAGGED > out/run_tag.txt; else echo "${{ inputs.run_tag }}" > out/run_tag.txt; fi
+          cat out/run_tag.txt
+      # actions/upload-artifact @ main 2026-10-30 (SHA resolved live via gh api)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: probe-${{ inputs.run_tag || github.run_id }}
+          path: out/
+          retention-days: 30

@@ -9,4 +9,6 @@ repository = "https://github.com/nitishagar/cpu-enough"
 [workspace]
 
 [dependencies]
-# 1.1 scaffold is dependency-free by design; serde + clap land with the 1.2 modules.
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
